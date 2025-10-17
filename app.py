@@ -1,288 +1,258 @@
 import streamlit as st
 import pandas as pd
-import os, json
+import json, os, uuid
 
-# ==============================
-# 🔧 Basic setup
-# ==============================
-st.set_page_config(page_title="Timetable Builder", layout="wide")
-SAVE_DIR = "saved_projects"
-if not os.path.exists(SAVE_DIR):
-    os.makedirs(SAVE_DIR)
+# -----------------------------------------------------------
+#  SETUP & PROJECT SAVE / LOAD
+# -----------------------------------------------------------
 
-# ==============================
-# 💾 Save/Load Helpers
-# ==============================
-def save_project(name):
-    data = {}
-    for key, value in st.session_state.items():
-        if isinstance(value, (dict, list, str, int, float, bool)):
-            data[key] = value
-        elif isinstance(value, pd.DataFrame):
-            data[key] = value.to_dict()
-    with open(os.path.join(SAVE_DIR, f"{name}.json"), "w") as f:
-        json.dump(data, f, indent=2)
-    st.success(f"💾 Project '{name}' saved!")
+PROJECTS_DIR = "projects"
+os.makedirs(PROJECTS_DIR, exist_ok=True)
 
+def save_project(data, name):
+    with open(f"{PROJECTS_DIR}/{name}.json", "w") as f:
+        json.dump(data, f)
 
-def load_project(name):
-    file_path = os.path.join(SAVE_DIR, f"{name}.json")
-    if not os.path.exists(file_path):
-        st.error("Project not found.")
-        return
-    with open(file_path, "r") as f:
-        data = json.load(f)
-    for key, value in data.items():
-        if isinstance(value, dict) and all(isinstance(v, dict) for v in value.values()):
-            st.session_state[key] = pd.DataFrame.from_dict(value)
-        else:
-            st.session_state[key] = value
-    st.success(f"📂 Project '{name}' loaded successfully!")
+def load_projects():
+    projects = []
+    for f in os.listdir(PROJECTS_DIR):
+        if f.endswith(".json"):
+            with open(f"{PROJECTS_DIR}/{f}") as j:
+                data = json.load(j)
+                projects.append({"name": f[:-5], "data": data})
+    return projects
 
+# -----------------------------------------------------------
+#  PROJECT CONTROLS
+# -----------------------------------------------------------
 
 def project_controls():
-    """Reusable Save/Load UI"""
-    st.markdown("---")
-    col1, col2 = st.columns([1, 1])
+    st.subheader("🗂️ Project Controls")
+    key_prefix = str(uuid.uuid4())[:8]
+    projects = load_projects()
+    project_names = [p["name"] for p in projects]
+
+    col1, col2 = st.columns([2, 1])
     with col1:
         project_name = st.text_input(
-            "Project name",
+            "New or Current Project Name",
             value=st.session_state.get("current_project", "Untitled Project"),
-            key="proj_name_input",
+            key=f"proj_name_input_{key_prefix}",
         )
     with col2:
-        if st.button("💾 Save Project"):
+        save_now = st.button("💾 Save", key=f"save_button_{key_prefix}")
+
+    if save_now:
+        if project_name.strip():
+            save_project(st.session_state, project_name)
             st.session_state["current_project"] = project_name
-            save_project(project_name)
+            st.success(f"Project '{project_name}' saved!")
+        else:
+            st.warning("Please enter a project name before saving.")
 
-    saved_files = [f[:-5] for f in os.listdir(SAVE_DIR) if f.endswith(".json")]
-    col3, col4 = st.columns([1, 1])
-    with col3:
-        selected_load = st.selectbox("📂 Load existing project", ["-- Select --"] + saved_files)
-    with col4:
-        if st.button("Load Selected Project") and selected_load != "-- Select --":
-            st.session_state["current_project"] = selected_load
-            load_project(selected_load)
+    st.divider()
 
+    if project_names:
+        st.write("📂 Load an Existing Project")
+        selected_project = st.selectbox(
+            "Select Project to Load", project_names, key=f"load_select_{key_prefix}"
+        )
+        load_now = st.button("📥 Load", key=f"load_button_{key_prefix}")
 
-# ==============================
-# 🧱 App Tabs
-# ==============================
-tabs = st.tabs([
-    "1️⃣ Project Setup",
-    "2️⃣ Day Structure",
-    "3️⃣ School Data",
-    "4️⃣ Subjects & Rooms",
-    "5️⃣ Class Assignments",
-    "6️⃣ Timetable Generator",
-])
+        if load_now:
+            project_data = next(
+                (p["data"] for p in projects if p["name"] == selected_project), None
+            )
+            if project_data:
+                st.session_state.clear()
+                st.session_state.update(project_data)
+                st.session_state["current_project"] = selected_project
+                st.success(f"Project '{selected_project}' loaded successfully!")
+                st.experimental_rerun()
 
-# -------------------------------------
-# 1️⃣ PROJECT SETUP
-# -------------------------------------
-with tabs[0]:
-    st.header("🗂️ Project Setup")
-    project_controls()
-    st.write("Set basic parameters for your timetable project.")
+    if "current_project" in st.session_state:
+        st.info(f"✅ Current project: {st.session_state['current_project']}")
 
-    st.session_state["num_days"] = st.number_input("Number of days per cycle", 1, 14, 5)
-    st.session_state["num_periods"] = st.number_input("Number of periods per day", 1, 12, 6)
+# -----------------------------------------------------------
+#  DAY STRUCTURE
+# -----------------------------------------------------------
 
-    st.session_state["days"] = [f"Day {i+1}" for i in range(st.session_state["num_days"])]
-    st.session_state["periods"] = [str(i+1) for i in range(st.session_state["num_periods"])]
-
-    st.success("✅ Parameters set successfully!")
-
-# -------------------------------------
-# 2️⃣ DAY STRUCTURE
-# -------------------------------------
-with tabs[1]:
-    st.header("🗓️ Day Structure")
-    project_controls()
-
-    same_structure = st.radio("Use the same structure each day?", ["Yes", "No"], index=0)
-    if same_structure == "Yes":
-        st.session_state["day_structure"] = {
-            "Periods": st.session_state["periods"]
-        }
-        st.info("Using the same structure each day.")
-    else:
-        st.session_state["day_structure"] = {}
-        for day in st.session_state["days"]:
-            with st.expander(day):
-                periods = st.text_area(
-                    f"Enter periods for {day} (comma-separated)",
-                    value=",".join(st.session_state["periods"]),
-                ).split(",")
-                st.session_state["day_structure"][day] = [p.strip() for p in periods]
-
-    st.success("✅ Day structure saved.")
-
-# -------------------------------------
-# 3️⃣ SCHOOL DATA
-# -------------------------------------
-with tabs[2]:
-    st.header("🏫 School Data – Teacher List")
-    project_controls()
-
-    st.download_button(
-        "📄 Download Teacher CSV Template",
-        data="UID,Email,Title,FirstName,MiddleName,LastName,PreferredName,Department1,Department2\n",
-        file_name="teacher_template.csv",
+def day_structure():
+    st.subheader("📅 Day Structure")
+    same_structure = st.radio(
+        "Use same structure each day?",
+        ["Yes", "No"],
+        key=f"same_struct_{uuid.uuid4()}",
+        horizontal=True,
     )
 
-    uploaded = st.file_uploader("Upload Teacher List CSV", type="csv")
-    if uploaded:
-        teachers = pd.read_csv(uploaded)
-        st.session_state["teachers"] = teachers
-        st.success("✅ Teacher list uploaded!")
-        st.dataframe(teachers)
+    if same_structure == "Yes":
+        num_periods = st.number_input("Number of periods per day", 1, 12, 6)
+        st.session_state["day_structure"] = {"same": True, "periods": num_periods}
     else:
-        st.info("Or enter manually below:")
-        if "teachers" not in st.session_state:
-            st.session_state["teachers"] = pd.DataFrame(
-                columns=[
-                    "UID", "Email", "Title", "FirstName", "MiddleName",
-                    "LastName", "PreferredName", "Department1", "Department2"
-                ]
-            )
-        st.data_editor(st.session_state["teachers"], num_rows="dynamic")
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        structure = {}
+        for d in days:
+            structure[d] = st.number_input(f"Periods on {d}", 1, 12, 6, key=f"{d}_{uuid.uuid4()}")
+        st.session_state["day_structure"] = {"same": False, "structure": structure}
 
-# -------------------------------------
-# 4️⃣ SUBJECTS & ROOMS
-# -------------------------------------
-with tabs[3]:
-    st.header("📚 Subjects & Rooms")
-    project_controls()
+# -----------------------------------------------------------
+#  SCHOOL DATA (TEACHERS)
+# -----------------------------------------------------------
 
-    # Subject list
-    st.subheader("Subjects")
-    if "subjects" not in st.session_state:
-        st.session_state["subjects"] = pd.DataFrame(columns=["Code", "Name", "Department"])
-    st.session_state["subjects"] = st.data_editor(st.session_state["subjects"], num_rows="dynamic")
+def school_data():
+    st.subheader("🏫 School Data — Teachers")
 
-    # Rooms
-    st.subheader("Rooms")
-    if "rooms" not in st.session_state:
-        st.session_state["rooms"] = pd.DataFrame(
-            columns=["Code", "Building", "Level", "Capacity", "Specialty"]
+    # Downloadable CSV template
+    if st.button("⬇️ Download Teacher CSV Template"):
+        df_template = pd.DataFrame({
+            "UID": [],
+            "Email": [],
+            "Title": [],
+            "FirstName": [],
+            "MiddleName": [],
+            "LastName": [],
+            "PreferredName": [],
+            "Department1": [],
+            "Department2": [],
+        })
+        df_template.to_csv("teacher_template.csv", index=False)
+        st.download_button(
+            label="Download Template",
+            data=df_template.to_csv(index=False),
+            file_name="teacher_template.csv",
+            mime="text/csv",
         )
-    st.session_state["rooms"] = st.data_editor(st.session_state["rooms"], num_rows="dynamic")
 
-# -------------------------------------
-# 5️⃣ CLASS ASSIGNMENTS
-# -------------------------------------
-with tabs[4]:
-    st.header("👩‍🏫 Class Assignments")
-    project_controls()
+    uploaded_file = st.file_uploader("Upload Teacher CSV", type=["csv"])
+    if uploaded_file:
+        teachers_df = pd.read_csv(uploaded_file)
+        st.session_state["teachers"] = teachers_df.to_dict()
+        st.dataframe(teachers_df)
 
-    if "classes" not in st.session_state:
-        st.session_state["classes"] = []
+# -----------------------------------------------------------
+#  SUBJECTS & ROOMS
+# -----------------------------------------------------------
 
-    with st.form("add_class"):
-        st.subheader("Add a New Class")
-        class_name = st.text_input("Class Name")
-        teacher_uid = st.text_input("Teacher UID")
-        subject_code = st.text_input("Subject Code")
-        room_code = st.text_input("Preferred Room")
-        num_periods = st.number_input("Number of Periods", 1, 20, 3)
-        schedule_type = st.selectbox("Schedule Type", ["Relaxed", "Strict"])
-        day = st.selectbox("Fixed Day (for Strict only)", [""] + st.session_state["days"])
-        period = st.selectbox("Fixed Period (for Strict only)", [""] + st.session_state["periods"])
-        submitted = st.form_submit_button("Add Class")
+def subjects_data():
+    st.subheader("📘 Subjects & Rooms")
 
-        if submitted:
-            st.session_state["classes"].append({
-                "ClassName": class_name,
-                "TeacherUID": teacher_uid,
-                "SubjectCode": subject_code,
-                "RoomCode": room_code,
-                "NumPeriods": num_periods,
-                "ScheduleType": schedule_type,
-                "Day": day,
-                "Period": period
-            })
-            st.success(f"✅ Added class '{class_name}'")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Subjects**")
+        subjects = st.text_area(
+            "Enter subjects (one per line):",
+            value="\n".join(st.session_state.get("subjects", [])),
+            height=150,
+            key=f"subjects_{uuid.uuid4()}",
+        )
+        st.session_state["subjects"] = [s.strip() for s in subjects.split("\n") if s.strip()]
 
-    if st.session_state["classes"]:
+    with col2:
+        st.markdown("**Rooms**")
+        room_data = st.text_area(
+            "Enter rooms (Format: Room,Building/Level,Capacity,Specialty):",
+            value="\n".join(st.session_state.get("rooms", [])),
+            height=150,
+            key=f"rooms_{uuid.uuid4()}",
+        )
+        st.session_state["rooms"] = [r.strip() for r in room_data.split("\n") if r.strip()]
+
+# -----------------------------------------------------------
+#  CLASS ASSIGNMENTS
+# -----------------------------------------------------------
+
+def class_assignments():
+    st.subheader("👩‍🏫 Class Assignments")
+
+    st.write("Enter classes and constraints:")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        subject = st.selectbox(
+            "Subject",
+            st.session_state.get("subjects", []),
+            key=f"subject_{uuid.uuid4()}",
+        )
+    with col2:
+        teacher = st.text_input("Teacher UID", key=f"teacher_{uuid.uuid4()}")
+    with col3:
+        periods = st.number_input("Number of Periods", 1, 10, 4, key=f"periods_{uuid.uuid4()}")
+
+    fit = st.radio(
+        "Scheduling Type",
+        ["Relaxed (best fit)", "Strict (fixed day/period)"],
+        horizontal=True,
+        key=f"fit_type_{uuid.uuid4()}",
+    )
+
+    if fit == "Strict (fixed day/period)":
+        day = st.selectbox("Day", ["Mon", "Tue", "Wed", "Thu", "Fri"], key=f"day_{uuid.uuid4()}")
+        period = st.number_input("Period", 1, 12, 1, key=f"period_{uuid.uuid4()}")
+    else:
+        day, period = None, None
+
+    if st.button("➕ Add Class", key=f"add_class_{uuid.uuid4()}"):
+        new_class = {
+            "Subject": subject,
+            "Teacher": teacher,
+            "Periods": periods,
+            "Type": fit,
+            "Day": day,
+            "Period": period,
+        }
+        st.session_state.setdefault("classes", []).append(new_class)
+        st.success("Class added!")
+
+    if "classes" in st.session_state:
         st.dataframe(pd.DataFrame(st.session_state["classes"]))
 
-# -------------------------------------
-# 6️⃣ TIMETABLE GENERATOR
-# -------------------------------------
-with tabs[5]:
-    st.header("📅 Timetable Generator")
-    project_controls()
+# -----------------------------------------------------------
+#  TIMETABLE GENERATOR
+# -----------------------------------------------------------
 
-    if not st.session_state.get("classes"):
-        st.warning("Please add class assignments first.")
+def timetable_generator():
+    st.subheader("🧮 Timetable Generator & Conflict Checker")
+
+    if "classes" not in st.session_state:
+        st.warning("No classes to generate timetable from yet.")
+        return
+
+    st.write("This section will eventually auto-generate a timetable grid and detect conflicts.")
+
+    df = pd.DataFrame(st.session_state["classes"])
+    st.dataframe(df)
+
+    # Example conflict check
+    conflicts = df[df.duplicated(subset=["Teacher", "Day", "Period"], keep=False)]
+    if not conflicts.empty:
+        st.error("Conflicts found:")
+        st.dataframe(conflicts)
     else:
-        num_days = len(st.session_state["days"])
-        num_periods = len(st.session_state["periods"])
+        st.success("✅ No teacher conflicts found!")
 
-        if "timetable" not in st.session_state:
-            st.session_state["timetable"] = pd.DataFrame(
-                [["" for _ in range(num_periods)] for _ in range(num_days)],
-                index=st.session_state["days"],
-                columns=st.session_state["periods"]
-            )
+# -----------------------------------------------------------
+#  MAIN APP
+# -----------------------------------------------------------
 
-        if st.button("🧮 Generate Timetable Automatically"):
-            df = st.session_state["timetable"].copy()
-            used_slots = set()
+st.title("📚 Smart Timetable Builder")
+project_controls()
 
-            for c in st.session_state["classes"]:
-                periods_needed = int(c.get("NumPeriods", 1))
-                schedule_type = c.get("ScheduleType", "Relaxed")
-                teacher = c["TeacherUID"]
-                class_name = c["ClassName"]
+tabs = st.tabs([
+    "1️⃣ Day Structure",
+    "2️⃣ School Data",
+    "3️⃣ Subjects & Rooms",
+    "4️⃣ Class Assignments",
+    "5️⃣ Timetable Generator",
+])
 
-                placed = 0
-
-                if schedule_type == "Strict" and c.get("Day") and c.get("Period"):
-                    day, period = c["Day"], c["Period"]
-                    if (day, period) not in used_slots:
-                        df.at[day, period] = f"{class_name}\n({teacher})"
-                        used_slots.add((day, period))
-                        placed += 1
-
-                if schedule_type == "Relaxed":
-                    for d in st.session_state["days"]:
-                        for p in st.session_state["periods"]:
-                            if placed >= periods_needed:
-                                break
-                            if (d, p) not in used_slots and df.at[d, p] == "":
-                                df.at[d, p] = f"{class_name}\n({teacher})"
-                                used_slots.add((d, p))
-                                placed += 1
-                        if placed >= periods_needed:
-                            break
-
-            st.session_state["timetable"] = df
-            st.success("✅ Timetable generated successfully!")
-
-        st.dataframe(st.session_state["timetable"], use_container_width=True)
-
-        if st.button("🔍 Check for Conflicts"):
-            df = st.session_state["timetable"]
-            conflicts = []
-            cell_teachers = {}
-
-            for d in st.session_state["days"]:
-                for p in st.session_state["periods"]:
-                    val = df.at[d, p]
-                    if val and "(" in val and ")" in val:
-                        teacher = val.split("(")[-1].split(")")[0]
-                        key = (d, p)
-                        cell_teachers.setdefault(key, []).append(teacher)
-
-            for key, teachers in cell_teachers.items():
-                if len(teachers) > 1:
-                    conflicts.append(f"Teacher conflict on {key[0]} Period {key[1]}: {', '.join(teachers)}")
-
-            if conflicts:
-                st.error("⚠️ Conflicts detected:")
-                for c in conflicts:
-                    st.write(f"- {c}")
-            else:
-                st.success("✅ No teacher conflicts detected!")
+with tabs[0]:
+    day_structure()
+with tabs[1]:
+    school_data()
+with tabs[2]:
+    subjects_data()
+with tabs[3]:
+    class_assignments()
+with tabs[4]:
+    timetable_generator()
