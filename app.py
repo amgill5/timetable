@@ -10,10 +10,13 @@ PROJECTS_DIR = "projects"
 os.makedirs(PROJECTS_DIR, exist_ok=True)
 
 def save_project(data, name):
+    """Save session state data to a JSON file."""
+    state_to_save = {k: v for k, v in data.items() if not k.startswith("_")}
     with open(f"{PROJECTS_DIR}/{name}.json", "w") as f:
-        json.dump(data, f)
+        json.dump(state_to_save, f)
 
 def load_projects():
+    """Load all existing project files."""
     projects = []
     for f in os.listdir(PROJECTS_DIR):
         if f.endswith(".json"):
@@ -28,6 +31,7 @@ def load_projects():
 
 def project_controls():
     st.subheader("🗂️ Project Controls")
+
     key_prefix = str(uuid.uuid4())[:8]
     projects = load_projects()
     project_names = [p["name"] for p in projects]
@@ -40,15 +44,13 @@ def project_controls():
             key=f"proj_name_input_{key_prefix}",
         )
     with col2:
-        save_now = st.button("💾 Save", key=f"save_button_{key_prefix}")
-
-    if save_now:
-        if project_name.strip():
-            save_project(st.session_state, project_name)
-            st.session_state["current_project"] = project_name
-            st.success(f"Project '{project_name}' saved!")
-        else:
-            st.warning("Please enter a project name before saving.")
+        if st.button("💾 Save Project", key=f"save_button_{key_prefix}"):
+            if project_name.strip():
+                save_project(st.session_state, project_name)
+                st.session_state["current_project"] = project_name
+                st.success(f"Project '{project_name}' saved!")
+            else:
+                st.warning("Please enter a project name before saving.")
 
     st.divider()
 
@@ -57,9 +59,7 @@ def project_controls():
         selected_project = st.selectbox(
             "Select Project to Load", project_names, key=f"load_select_{key_prefix}"
         )
-        load_now = st.button("📥 Load", key=f"load_button_{key_prefix}")
-
-        if load_now:
+        if st.button("📥 Load Project", key=f"load_button_{key_prefix}"):
             project_data = next(
                 (p["data"] for p in projects if p["name"] == selected_project), None
             )
@@ -74,36 +74,70 @@ def project_controls():
         st.info(f"✅ Current project: {st.session_state['current_project']}")
 
 # -----------------------------------------------------------
-#  DAY STRUCTURE
+#  DAY STRUCTURE (now includes period naming)
 # -----------------------------------------------------------
 
 def day_structure():
     st.subheader("📅 Day Structure")
+
     same_structure = st.radio(
-        "Use same structure each day?",
+        "Use the same structure each day?",
         ["Yes", "No"],
-        key=f"same_struct_{uuid.uuid4()}",
+        index=0 if st.session_state.get("day_structure", {}).get("same", True) else 1,
+        key=f"same_structure_{uuid.uuid4()}",
         horizontal=True,
     )
 
     if same_structure == "Yes":
-        num_periods = st.number_input("Number of periods per day", 1, 12, 6)
-        st.session_state["day_structure"] = {"same": True, "periods": num_periods}
+        num_periods = st.number_input(
+            "Number of periods per day", 1, 12,
+            st.session_state.get("day_structure", {}).get("periods", 6),
+        )
+
+        period_names = []
+        for i in range(int(num_periods)):
+            period_name = st.text_input(
+                f"Name for Period {i+1}",
+                value=f"Period {i+1}" if "period_names" not in st.session_state else
+                      st.session_state["day_structure"].get("period_names", [])[i]
+                      if i < len(st.session_state["day_structure"].get("period_names", [])) else f"Period {i+1}",
+                key=f"period_name_{i}_{uuid.uuid4()}",
+            )
+            period_names.append(period_name)
+
+        st.session_state["day_structure"] = {
+            "same": True,
+            "periods": int(num_periods),
+            "period_names": period_names,
+        }
+
     else:
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
         structure = {}
         for d in days:
-            structure[d] = st.number_input(f"Periods on {d}", 1, 12, 6, key=f"{d}_{uuid.uuid4()}")
+            with st.expander(f"{d}"):
+                num_periods = st.number_input(
+                    f"Number of periods on {d}", 1, 12, 6, key=f"{d}_num_{uuid.uuid4()}"
+                )
+                period_names = []
+                for i in range(int(num_periods)):
+                    period_name = st.text_input(
+                        f"{d} - Period {i+1} name",
+                        value=f"Period {i+1}",
+                        key=f"{d}_period_{i}_{uuid.uuid4()}",
+                    )
+                    period_names.append(period_name)
+                structure[d] = {"num_periods": int(num_periods), "period_names": period_names}
+
         st.session_state["day_structure"] = {"same": False, "structure": structure}
 
 # -----------------------------------------------------------
-#  SCHOOL DATA (TEACHERS)
+#  SCHOOL DATA (Teachers)
 # -----------------------------------------------------------
 
 def school_data():
     st.subheader("🏫 School Data — Teachers")
 
-    # Downloadable CSV template
     if st.button("⬇️ Download Teacher CSV Template"):
         df_template = pd.DataFrame({
             "UID": [],
@@ -116,7 +150,6 @@ def school_data():
             "Department1": [],
             "Department2": [],
         })
-        df_template.to_csv("teacher_template.csv", index=False)
         st.download_button(
             label="Download Template",
             data=df_template.to_csv(index=False),
@@ -139,22 +172,18 @@ def subjects_data():
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**Subjects**")
         subjects = st.text_area(
             "Enter subjects (one per line):",
             value="\n".join(st.session_state.get("subjects", [])),
             height=150,
-            key=f"subjects_{uuid.uuid4()}",
         )
         st.session_state["subjects"] = [s.strip() for s in subjects.split("\n") if s.strip()]
 
     with col2:
-        st.markdown("**Rooms**")
         room_data = st.text_area(
             "Enter rooms (Format: Room,Building/Level,Capacity,Specialty):",
             value="\n".join(st.session_state.get("rooms", [])),
             height=150,
-            key=f"rooms_{uuid.uuid4()}",
         )
         st.session_state["rooms"] = [r.strip() for r in room_data.split("\n") if r.strip()]
 
@@ -165,34 +194,27 @@ def subjects_data():
 def class_assignments():
     st.subheader("👩‍🏫 Class Assignments")
 
-    st.write("Enter classes and constraints:")
-
     col1, col2, col3 = st.columns(3)
     with col1:
-        subject = st.selectbox(
-            "Subject",
-            st.session_state.get("subjects", []),
-            key=f"subject_{uuid.uuid4()}",
-        )
+        subject = st.selectbox("Subject", st.session_state.get("subjects", []))
     with col2:
-        teacher = st.text_input("Teacher UID", key=f"teacher_{uuid.uuid4()}")
+        teacher = st.text_input("Teacher UID")
     with col3:
-        periods = st.number_input("Number of Periods", 1, 10, 4, key=f"periods_{uuid.uuid4()}")
+        periods = st.number_input("Number of Periods", 1, 10, 4)
 
     fit = st.radio(
         "Scheduling Type",
         ["Relaxed (best fit)", "Strict (fixed day/period)"],
         horizontal=True,
-        key=f"fit_type_{uuid.uuid4()}",
     )
 
     if fit == "Strict (fixed day/period)":
-        day = st.selectbox("Day", ["Mon", "Tue", "Wed", "Thu", "Fri"], key=f"day_{uuid.uuid4()}")
-        period = st.number_input("Period", 1, 12, 1, key=f"period_{uuid.uuid4()}")
+        day = st.selectbox("Day", ["Mon", "Tue", "Wed", "Thu", "Fri"])
+        period = st.text_input("Period name or number")
     else:
         day, period = None, None
 
-    if st.button("➕ Add Class", key=f"add_class_{uuid.uuid4()}"):
+    if st.button("➕ Add Class"):
         new_class = {
             "Subject": subject,
             "Teacher": teacher,
@@ -218,18 +240,16 @@ def timetable_generator():
         st.warning("No classes to generate timetable from yet.")
         return
 
-    st.write("This section will eventually auto-generate a timetable grid and detect conflicts.")
-
     df = pd.DataFrame(st.session_state["classes"])
     st.dataframe(df)
 
-    # Example conflict check
-    conflicts = df[df.duplicated(subset=["Teacher", "Day", "Period"], keep=False)]
-    if not conflicts.empty:
-        st.error("Conflicts found:")
-        st.dataframe(conflicts)
-    else:
-        st.success("✅ No teacher conflicts found!")
+    if {"Teacher", "Day", "Period"}.issubset(df.columns):
+        conflicts = df[df.duplicated(subset=["Teacher", "Day", "Period"], keep=False)]
+        if not conflicts.empty:
+            st.error("Conflicts found:")
+            st.dataframe(conflicts)
+        else:
+            st.success("✅ No teacher conflicts found!")
 
 # -----------------------------------------------------------
 #  MAIN APP
