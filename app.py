@@ -80,56 +80,85 @@ def project_controls():
 def day_structure():
     st.subheader("📅 Day Structure")
 
+    if "day_structure" not in st.session_state:
+        st.session_state["day_structure"] = {"same": True, "periods": 6, "period_names": [f"Period {i+1}" for i in range(6)]}
+
     same_structure = st.radio(
         "Use the same structure each day?",
         ["Yes", "No"],
-        index=0 if st.session_state.get("day_structure", {}).get("same", True) else 1,
-        key=f"same_structure_{uuid.uuid4()}",
+        index=0 if st.session_state["day_structure"].get("same", True) else 1,
         horizontal=True,
+        key="same_structure_toggle",
     )
 
     if same_structure == "Yes":
         num_periods = st.number_input(
-            "Number of periods per day", 1, 12,
-            st.session_state.get("day_structure", {}).get("periods", 6),
+            "Number of periods per day",
+            1, 12,
+            st.session_state["day_structure"].get("periods", 6),
+            key="num_periods_same",
         )
 
-        period_names = []
+        # Ensure list length matches
+        period_names = st.session_state["day_structure"].get("period_names", [])
+        if len(period_names) < num_periods:
+            period_names += [f"Period {i+1}" for i in range(len(period_names), num_periods)]
+        elif len(period_names) > num_periods:
+            period_names = period_names[:num_periods]
+
+        updated_names = []
         for i in range(int(num_periods)):
-            period_name = st.text_input(
+            updated_name = st.text_input(
                 f"Name for Period {i+1}",
-                value=f"Period {i+1}" if "period_names" not in st.session_state else
-                      st.session_state["day_structure"].get("period_names", [])[i]
-                      if i < len(st.session_state["day_structure"].get("period_names", [])) else f"Period {i+1}",
-                key=f"period_name_{i}_{uuid.uuid4()}",
+                value=period_names[i],
+                key=f"same_period_name_{i}",
             )
-            period_names.append(period_name)
+            updated_names.append(updated_name)
 
         st.session_state["day_structure"] = {
             "same": True,
             "periods": int(num_periods),
-            "period_names": period_names,
+            "period_names": updated_names,
         }
 
     else:
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-        structure = {}
+        if "structure" not in st.session_state["day_structure"]:
+            st.session_state["day_structure"]["structure"] = {}
+
         for d in days:
             with st.expander(f"{d}"):
+                current_day = st.session_state["day_structure"]["structure"].get(d, {})
                 num_periods = st.number_input(
-                    f"Number of periods on {d}", 1, 12, 6, key=f"{d}_num_{uuid.uuid4()}"
+                    f"Number of periods on {d}",
+                    1, 12,
+                    current_day.get("num_periods", 6),
+                    key=f"{d}_num_periods",
                 )
-                period_names = []
-                for i in range(int(num_periods)):
-                    period_name = st.text_input(
-                        f"{d} - Period {i+1} name",
-                        value=f"Period {i+1}",
-                        key=f"{d}_period_{i}_{uuid.uuid4()}",
-                    )
-                    period_names.append(period_name)
-                structure[d] = {"num_periods": int(num_periods), "period_names": period_names}
 
-        st.session_state["day_structure"] = {"same": False, "structure": structure}
+                # Ensure period list length is consistent
+                period_names = current_day.get("period_names", [])
+                if len(period_names) < num_periods:
+                    period_names += [f"Period {i+1}" for i in range(len(period_names), num_periods)]
+                elif len(period_names) > num_periods:
+                    period_names = period_names[:num_periods]
+
+                updated_periods = []
+                for i in range(int(num_periods)):
+                    p_name = st.text_input(
+                        f"{d} - Period {i+1} name",
+                        value=period_names[i],
+                        key=f"{d}_period_name_{i}",
+                    )
+                    updated_periods.append(p_name)
+
+                st.session_state["day_structure"]["structure"][d] = {
+                    "num_periods": int(num_periods),
+                    "period_names": updated_periods,
+                }
+
+        st.session_state["day_structure"]["same"] = False
+
 
 # -----------------------------------------------------------
 #  SCHOOL DATA (Teachers)
